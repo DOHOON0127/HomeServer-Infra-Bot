@@ -125,6 +125,15 @@ def handle_message(text: str) -> str:
             name=fc.name,
             response={"result": tool_result},
         )
+        # 두 번째 호출은 결과를 텍스트로 정리만 하면 되는 단계라, 도구 재호출을
+        # 강제로 막아둠(안 그러면 첫 호출의 강제 설정이 그대로 이어져 또 도구를
+        # 부르려다 텍스트 응답이 비어버림)
+        follow_up_config = types.GenerateContentConfig(
+            tools=[PROMETHEUS_TOOL],
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="NONE")
+            ),
+        )
         follow_up = client.models.generate_content(
             model=MODEL_NAME,
             contents=[
@@ -132,11 +141,11 @@ def handle_message(text: str) -> str:
                 response.candidates[0].content,
                 types.Content(role="user", parts=[function_response_part]),
             ],
-            config=config,
+            config=follow_up_config,
         )
-        return follow_up.text
+        return follow_up.text or f"조회 결과: {tool_result}"
 
-    return response.text
+    return response.text or "응답을 생성하지 못함"
 
 
 def telegram_poll_loop():
