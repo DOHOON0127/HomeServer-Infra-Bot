@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths-ignore:
       - "k8s-manifests/**"   # CI가 만든 커밋이 다시 CI를 트리거하는 무한루프 방지
+      - "*.md"
 
 jobs:
   build-and-deploy:
