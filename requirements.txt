@@ -1,5 +1,5 @@
 fastapi
 uvicorn[standard]
 prometheus-client
-google-generativeai
+google-genai
 requests

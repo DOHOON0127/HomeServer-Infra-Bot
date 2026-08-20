@@ -3,10 +3,11 @@ import os
 import threading
 import time
 
-import google.generativeai as genai
 import requests
 from fastapi import FastAPI
 from fastapi.responses import Response
+from google import genai
+from google.genai import types
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 logging.basicConfig(
@@ -20,7 +21,8 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 ALLOWED_CHAT_ID = int(os.environ["ALLOWED_CHAT_ID"])
 
-genai.configure(api_key=GEMINI_API_KEY)
+MODEL_NAME = "gemini-3.6-flash"
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 MESSAGES_TOTAL = Counter("infra_bot_messages_total", "Total telegram messages processed")
 TOOL_CALLS_TOTAL = Counter(
@@ -73,10 +75,10 @@ def query_prometheus(metric: str) -> str:
         return f"조회 실패: {exc}"
 
 
-QUERY_PROMETHEUS_TOOL = {
-    "name": "query_prometheus",
-    "description": "라즈베리파이 서버의 실시간 리소스 사용량(CPU, 메모리, 디스크)을 조회함",
-    "parameters": {
+QUERY_PROMETHEUS_DECLARATION = types.FunctionDeclaration(
+    name="query_prometheus",
+    description="라즈베리파이 서버의 실시간 리소스 사용량(CPU, 메모리, 디스크)을 조회함",
+    parameters={
         "type": "object",
         "properties": {
             "metric": {
@@ -87,12 +89,8 @@ QUERY_PROMETHEUS_TOOL = {
         },
         "required": ["metric"],
     },
-}
-
-model = genai.GenerativeModel(
-    "gemini-3.6-flash",
-    tools=[{"function_declarations": [QUERY_PROMETHEUS_TOOL]}],
 )
+PROMETHEUS_TOOL = types.Tool(function_declarations=[QUERY_PROMETHEUS_DECLARATION])
 
 # 이 키워드가 있으면 Gemini의 자유 판단(AUTO) 대신 도구 호출을 강제함(ANY).
 # 애매한 표현에서 도구 호출을 누락하는 걸 막기 위한 안전장치.
@@ -103,36 +101,40 @@ def handle_message(text: str) -> str:
     MESSAGES_TOTAL.inc()
 
     force_tool = any(keyword in text.lower() for keyword in INFRA_KEYWORDS)
-    tool_config = {
-        "function_calling_config": {"mode": "ANY" if force_tool else "AUTO"}
-    }
+    tool_config = types.ToolConfig(
+        function_calling_config=types.FunctionCallingConfig(
+            mode="ANY" if force_tool else "AUTO"
+        )
+    )
+    config = types.GenerateContentConfig(tools=[PROMETHEUS_TOOL], tool_config=tool_config)
 
     start = time.time()
-    response = model.generate_content(text, tool_config=tool_config)
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=text,
+        config=config,
+    )
     GEMINI_LATENCY.observe(time.time() - start)
 
-    for part in response.candidates[0].content.parts:
-        function_call = getattr(part, "function_call", None)
-        if function_call and function_call.name == "query_prometheus":
-            tool_result = query_prometheus(function_call.args["metric"])
-            follow_up = model.generate_content(
-                [
-                    {"role": "user", "parts": [text]},
-                    {"role": "model", "parts": [part]},
-                    {
-                        "role": "function",
-                        "parts": [
-                            {
-                                "function_response": {
-                                    "name": "query_prometheus",
-                                    "response": {"result": tool_result},
-                                }
-                            }
-                        ],
-                    },
-                ]
-            )
-            return follow_up.text
+    function_calls = response.function_calls or []
+    if function_calls and function_calls[0].name == "query_prometheus":
+        fc = function_calls[0]
+        tool_result = query_prometheus(fc.args["metric"])
+
+        function_response_part = types.Part.from_function_response(
+            name=fc.name,
+            response={"result": tool_result},
+        )
+        follow_up = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[
+                types.Content(role="user", parts=[types.Part.from_text(text=text)]),
+                response.candidates[0].content,
+                types.Content(role="user", parts=[function_response_part]),
+            ],
+            config=config,
+        )
+        return follow_up.text
 
     return response.text
 
