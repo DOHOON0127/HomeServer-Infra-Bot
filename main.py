@@ -117,8 +117,8 @@ def handle_message(text: str) -> str:
             tool_result = query_prometheus(function_call.args["metric"])
             follow_up = model.generate_content(
                 [
-                    text,
-                    part,
+                    {"role": "user", "parts": [text]},
+                    {"role": "model", "parts": [part]},
                     {
                         "role": "function",
                         "parts": [
