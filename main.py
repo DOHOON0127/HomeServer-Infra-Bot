@@ -90,7 +90,7 @@ QUERY_PROMETHEUS_TOOL = {
 }
 
 model = genai.GenerativeModel(
-    "gemini-2.0-flash",
+    "gemini-3.6-flash",
     tools=[{"function_declarations": [QUERY_PROMETHEUS_TOOL]}],
 )
 
