@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: infra-bot
-          image: ghcr.io/dohoon0127/homeserver-infra-bot:2b93003970c2386b9d7610d1db38804846244dca
+          image: ghcr.io/dohoon0127/homeserver-infra-bot:424cc7db1b02a3085251de42668c8cdef41dd3a8
           ports:
             - containerPort: 8000
           env:
